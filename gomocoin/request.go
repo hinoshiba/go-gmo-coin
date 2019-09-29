@@ -67,6 +67,8 @@ func (self *Client) RunPool(ctx *context.Context) {
 				select {
 				case <- (*ctx).Done():
 					return
+				case <- pr.life.C:
+					continue
 				case <- tmr.C:
 					b, err := pr.req.Do()
 					if err != nil {
@@ -98,13 +100,15 @@ func (self *Client) PostPool(r *Request) ([]byte, error) {
 type poolRequest struct {
 	req  *Request
 
+	life *time.Timer
 	done chan struct{}
 	ret  []byte
 }
 
 func newPoolRequest(req *Request) *poolRequest {
 	done := make(chan struct{})
-	return &poolRequest{req:req, done:done}
+	life := time.NewTimer(time.Second * 3)
+	return &poolRequest{req:req, done:done, life:life}
 }
 
 func (self *poolRequest) Bytes() []byte {
