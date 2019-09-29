@@ -18,7 +18,7 @@ const (
 	PATH_PLIVATE = "/private"
 	PATH_PUBLIC  = "/public"
 
-	LIMIT_MILLISEC int = 300
+	LIMIT_MILLISEC int = 301
 )
 
 type Client struct {
@@ -56,7 +56,7 @@ func (self *Client) NewRequest(method string, base_path string, path string, bod
 }
 
 func (self *Client) RunPool(ctx *context.Context) {
-	tmr := time.NewTimer(time.Millisecond * time.Duration(LIMIT_MILLISEC))
+	tmr := time.NewTicker(time.Millisecond * time.Duration(LIMIT_MILLISEC))
 
 	go func() {
 		for {
@@ -68,6 +68,9 @@ func (self *Client) RunPool(ctx *context.Context) {
 				case <- (*ctx).Done():
 					return
 				case <- pr.life.C:
+					go func() {
+						pr.done <- struct{}{}
+					}()
 					continue
 				case <- tmr.C:
 					b, err := pr.req.Do()
@@ -93,7 +96,12 @@ func (self *Client) PostPool(r *Request) ([]byte, error) {
 	go func() {
 		self.pr_c <- pr
 	}()
+
 	<-pr.done
+
+	if pr.Bytes() == nil {
+		return nil, fmt.Errorf("empty return")
+	}
 	return pr.Bytes(), nil
 }
 
