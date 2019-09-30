@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"context"
+	"strconv"
 	"encoding/json"
 )
 
@@ -188,7 +189,7 @@ func (self *GoMOcoin) Order(mode string, symbol string, size float64, rd *RateDa
 	if price == "" {
 		return "", fmt.Errorf("undefined mode. %s", mode)
 	}
-	size_str := fmt.Sprintf("%.4f", size)
+	size_str := strconv.FormatFloat(size, 'f', -1, 64)
 
 	order := (`{"symbol" : "` + symbol + `", "side" : "` + mode + `",
 			"executionType" : "LIMIT", "price" : "` + price + `",
