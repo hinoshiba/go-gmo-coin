@@ -170,11 +170,14 @@ type orderBase struct {
 	Data string `json:"data"`
 }
 
-func (self *GoMOcoin) Order(mode string, symbol string, size float64) (string, error) {
+func (self *GoMOcoin) Order(mode string, symbol string, size float64, rd *RateData) (string, error) {
 	var price string
 	rate, ok := self.rate[symbol]
 	if !ok {
 		return "", fmt.Errorf("undefined symbol. %s", symbol)
+	}
+	if rd != nil {
+		rate = rd
 	}
 	if mode == SIDE_SELL {
 		price = rate.Bid
