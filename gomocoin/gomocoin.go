@@ -3,9 +3,14 @@ package gomocoin
 import (
 	"fmt"
 	"sync"
+	"time"
 	"context"
 	"strconv"
 	"encoding/json"
+)
+
+import (
+	"github.com/vouquet/shop"
 )
 
 const (
@@ -29,6 +34,8 @@ const (
 
 	TYPE_MARKET string = "MARKET"
 	TYPE_LIMIT string = "LIMIT"
+
+	FMT_TIME string = "2006-01-02T15:04:05.000Z"
 )
 
 type GoMOcoin struct {
@@ -143,7 +150,93 @@ type RateData struct {
 	Volume    string `json:"volume"`
 }
 
-func (self *GoMOcoin) UpdateRate() (map[string]*RateData, error) {
+type Rate struct {
+	ask    float64
+	bid    float64
+	high   float64
+	last   float64
+	low    float64
+	symbol string
+	t      time.Time
+	volume float64
+}
+
+func (self *Rate) Ask() float64 {
+	return self.ask
+}
+
+func (self *Rate) Bid() float64 {
+	return self.bid
+}
+
+func (self *Rate) High() float64 {
+	return self.high
+}
+
+func (self *Rate) Last() float64 {
+	return self.last
+}
+
+func (self *Rate) Low() float64 {
+	return self.low
+}
+
+func (self *Rate) Symbol() string {
+	return self.symbol
+}
+
+func (self *Rate) Time() time.Time {
+	return self.t
+}
+
+func (self *Rate) Volume() float64 {
+	return self.volume
+}
+
+func conv2Rate(rd *RateData) (*Rate, error) {
+	ask, err := strconv.ParseFloat(rd.Ask, 64)
+	if err != nil {
+		return nil, err
+	}
+	bid, err := strconv.ParseFloat(rd.Bid, 64)
+	if err != nil {
+		return nil, err
+	}
+	high, err := strconv.ParseFloat(rd.High, 64)
+	if err != nil {
+		return nil, err
+	}
+	last, err := strconv.ParseFloat(rd.Last, 64)
+	if err != nil {
+		return nil, err
+	}
+	low, err := strconv.ParseFloat(rd.Low, 64)
+	if err != nil {
+		return nil, err
+	}
+	volume, err := strconv.ParseFloat(rd.Volume, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	t, err := time.Parse(FMT_TIME, rd.Timestamp)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Rate{
+		ask: ask,
+		bid: bid,
+		high: high,
+		last: last,
+		low: low,
+		symbol: rd.Symbol,
+		t: t,
+		volume: volume,
+	}, nil
+}
+
+func (self *GoMOcoin) GetRate() (map[string]shop.Rate, error) {
 	self.lock()
 	defer self.unlock()
 
@@ -156,14 +249,18 @@ func (self *GoMOcoin) UpdateRate() (map[string]*RateData, error) {
 		return nil, err
 	}
 
-	data := make(map[string]*RateData)
+	rs := make(map[string]shop.Rate)
 	for _, rd := range rb.Data {
-		data[rd.Symbol] = rd
+		r, err := conv2Rate(rd)
+		if err != nil {
+			return nil, err
+		}
+
+		rs[rd.Symbol] = r
 		self.rate[rd.Symbol] = rd
 	}
-	self.rate = data
 
-	return data, nil
+	return rs, nil
 }
 
 type orderBase struct {
@@ -171,28 +268,34 @@ type orderBase struct {
 	Data string `json:"data"`
 }
 
-func (self *GoMOcoin) Order(mode string, symbol string, size float64, rd *RateData) (string, error) {
-	var price string
-	rate, ok := self.rate[symbol]
-	if !ok {
-		return "", fmt.Errorf("undefined symbol. %s", symbol)
-	}
-	if rd != nil {
-		rate = rd
+func (self *GoMOcoin) Order(mode string, symbol string, size float64, r shop.Rate) (string, error) {
+	var o_price float64 = 0
+	var o_rate  shop.Rate = r
+
+	if r == nil {
+		rate_data, ok := self.rate[symbol]
+		if !ok {
+			return "", fmt.Errorf("undefined symbol. %s", symbol)
+		}
+
+		rate, err := conv2Rate(rate_data)
+		if err != nil {
+			return "", err
+		}
+
+		o_rate = rate
 	}
 	if mode == SIDE_SELL {
-		price = rate.Bid
+		o_price = o_rate.Bid()
 	}
 	if mode == SIDE_BUY {
-		price = rate.Ask
+		o_price = o_rate.Ask()
 	}
-	if price == "" {
-		return "", fmt.Errorf("undefined mode. %s", mode)
-	}
+	price_str := fmt.Sprintf("%f", o_price)
 	size_str := strconv.FormatFloat(size, 'f', -1, 64)
 
 	order := (`{"symbol" : "` + symbol + `", "side" : "` + mode + `",
-			"executionType" : "LIMIT", "price" : "` + price + `",
+			"executionType" : "LIMIT", "price" : "` + price_str + `",
 			"size" : "` + size_str + `"}`)
 
 	ret, err := self.request2Pool("POST", "/private", "/v1/order", []byte(order))
