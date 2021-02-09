@@ -156,9 +156,12 @@ func (self *Request) Do() ([]byte, error) {
 }
 
 func (self *Request) createClient() *http.Client {
+	t := http.DefaultTransport.(*http.Transport)
+	t.MaxConnsPerHost = 1
+
 	return &http.Client{
 		Timeout: time.Second * 10,
-		Transport: &http.Transport{ MaxConnsPerHost: 1 },
+		Transport: t,
 	}
 }
 
