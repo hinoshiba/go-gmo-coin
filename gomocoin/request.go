@@ -4,6 +4,7 @@ import (
 	"io/ioutil"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 	"bytes"
 	"crypto/sha256"
@@ -52,7 +53,7 @@ func (self *Client) NewRequest(method string, base_path string, path string, bod
 	req.Header.Add("content-type", "application/json")
 	req.Header.Add("cache-control", "no-cache")
 
-	return &Request{c:new(http.Client), r:req}, nil
+	return NewRequest(req), nil
 }
 
 func (self *Client) RunPool(ctx context.Context) {
@@ -124,12 +125,24 @@ func (self *poolRequest) Bytes() []byte {
 }
 
 type Request struct {
-	c  *http.Client
 	r  *http.Request
+
+	mtx *sync.Mutex
+}
+
+func NewRequest(r *http.Request) *Request {
+	return &Request {
+		r: r,
+		mtx: new(sync.Mutex),
+	}
 }
 
 func (self *Request) Do() ([]byte, error) {
-	res, err := self.c.Do(self.r)
+	self.mtx.Lock()
+	defer self.mtx.Unlock()
+
+	c := self.createClient()
+	res, err := c.Do(self.r)
 	if err != nil {
 		return nil, err
 	}
@@ -140,6 +153,13 @@ func (self *Request) Do() ([]byte, error) {
 		return nil, err
 	}
 	return b, nil
+}
+
+func (self *Request) createClient() *http.Client {
+	return &http.Client{
+		Timeout: time.Second * 10,
+		Transport: &http.Transport{ MaxConnsPerHost: 1 },
+	}
 }
 
 func (self *Client) genhmac(msg []byte) []byte {
