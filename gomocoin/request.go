@@ -55,17 +55,17 @@ func (self *Client) NewRequest(method string, base_path string, path string, bod
 	return &Request{c:new(http.Client), r:req}, nil
 }
 
-func (self *Client) RunPool(ctx *context.Context) {
+func (self *Client) RunPool(ctx context.Context) {
 	tmr := time.NewTicker(time.Millisecond * time.Duration(LIMIT_MILLISEC))
 
 	go func() {
 		for {
 			select {
-			case <- (*ctx).Done():
+			case <- ctx.Done():
 				return
 			case pr := <- self.pr_c:
 				select {
-				case <- (*ctx).Done():
+				case <- ctx.Done():
 					return
 				case <- pr.life.C:
 					go func() {

@@ -36,7 +36,7 @@ type GoMOcoin struct {
 
 	rate        map[string]*RateData
 
-	ctx_cancel  *context.CancelFunc
+	ctx_cancel  context.CancelFunc
 	mtx         *sync.Mutex
 }
 
@@ -44,10 +44,10 @@ func NewGoMOcoin(api_key string, secret_key string, b_ctx context.Context) (*GoM
 	ctx, ctx_cancel := context.WithCancel(b_ctx)
 	auth := NewAuth(api_key, secret_key)
 	clnt := NewClient(auth)
-	clnt.RunPool(&ctx)
+	clnt.RunPool(ctx)
 
 	rate := make(map[string]*RateData)
-	self := &GoMOcoin{client:clnt, ctx_cancel:&ctx_cancel, rate:rate, mtx:new(sync.Mutex)}
+	self := &GoMOcoin{client:clnt, ctx_cancel:ctx_cancel, rate:rate, mtx:new(sync.Mutex)}
 	ok, err := self.checkStatus()
 	if err != nil {
 		return nil, err
@@ -67,7 +67,7 @@ func (self *GoMOcoin) unlock() {
 }
 
 func (self *GoMOcoin) Close() {
-	(*self.ctx_cancel)()
+	self.ctx_cancel()
 }
 
 func (self *GoMOcoin) request2Pool(method string, base_path string, path string, body []byte) ([]byte, error) {
