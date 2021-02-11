@@ -32,8 +32,7 @@ const (
 	SIDE_BUY  string = "BUY"
 	SIDE_SELL string = "SELL"
 
-	TYPE_MARKET string = "MARKET"
-	TYPE_LIMIT string = "LIMIT"
+	TYPE_EXECUTION_STREAM string = "MARKET"
 
 	FMT_TIME string = "2006-01-02T15:04:05.000Z"
 )
@@ -65,6 +64,87 @@ func NewGoMOcoin(api_key string, secret_key string, b_ctx context.Context) (*GoM
 	return self, nil
 }
 
+func (self *GoMOcoin) GetPositions(symbol string) ([]shop.Position, error) {
+	self.lock()
+	defer self.unlock()
+
+	param := "symbol=" + symbol
+	ret, err := self.request2Pool("GET", "/private", "/v1/openPositions", param, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var p posBase
+	if err := json.Unmarshal(ret, &p); err != nil {
+		return nil, err
+	}
+	if p.Status != 0 {
+		return nil, fmt.Errorf("%s", p.Message())
+	}
+
+	poss := []shop.Position{}
+	for _, pos := range p.Data.Poss {
+		poss = append(poss, pos)
+	}
+	return poss, nil
+}
+
+func (self *GoMOcoin) OrderStreamIn(mode string, symbol string, size float64) error {
+	size_str := strconv.FormatFloat(size, 'f', -1, 64)
+	order := (`{"symbol" : "` + symbol + `", "side" : "` + mode + `",
+			"executionType" : "` + TYPE_EXECUTION_STREAM + `",
+			"size" : "` + size_str + `"}`)
+
+	ret, err := self.request2Pool("POST", "/private", "/v1/order", "", []byte(order))
+	if err != nil {
+		return err
+	}
+	var o orderBase
+	if err := json.Unmarshal(ret, &o); err != nil {
+		return err
+	}
+	if o.Status != 0 {
+		return fmt.Errorf("%s", o.Message())
+	}
+	return nil
+}
+
+func (self *GoMOcoin) OrderStreamOut(pos shop.Position) error {
+	pb, ok := pos.(*Position)
+	if !ok {
+		return fmt.Errorf("unkown type at this store.")
+	}
+	var mode string
+	if pb.RawMode == SIDE_SELL {
+		mode = SIDE_BUY
+	}
+	if pb.RawMode == SIDE_BUY {
+		mode = SIDE_SELL
+	}
+	if mode == "" {
+		return fmt.Errorf("have a unkown mode. '%s'", pb.RawMode)
+	}
+
+	order := (`{"symbol" : "` + pb.RawSymbol + `", "side" : "` + mode + `",
+			"executionType" : "` + TYPE_EXECUTION_STREAM + `",
+			"settlePosition":[
+				{"size" : "` + pb.RawSize + `", "positionId" : ` + pb.Id() + `}
+			]}`)
+
+	ret, err := self.request2Pool("POST", "/private", "/v1/closeOrder", "", []byte(order))
+	if err != nil {
+		return err
+	}
+	var o orderBase
+	if err := json.Unmarshal(ret, &o); err != nil {
+		return err
+	}
+	if o.Status != 0 {
+		return fmt.Errorf("%s", o.Message())
+	}
+	return nil
+}
+
 func (self *GoMOcoin) lock() {
 	self.mtx.Lock()
 }
@@ -77,8 +157,8 @@ func (self *GoMOcoin) Close() {
 	self.ctx_cancel()
 }
 
-func (self *GoMOcoin) request2Pool(method string, base_path string, path string, body []byte) ([]byte, error) {
-	req, err := self.client.NewRequest(method, base_path, path, body)
+func (self *GoMOcoin) request2Pool(method string, base_path string, path string, param string, body []byte) ([]byte, error) {
+	req, err := self.client.NewRequest(method, base_path, path, param, body)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +199,7 @@ type statusData struct {
 }
 
 func (self *GoMOcoin) checkStatus() (bool, error) {
-	ret, err := self.request2Pool("GET", "/public", "/v1/status", nil)
+	ret, err := self.request2Pool("GET", "/public", "/v1/status", "", nil)
 	if err != nil {
 		return false, err
 	}
@@ -132,6 +212,45 @@ func (self *GoMOcoin) checkStatus() (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+type posBase struct {
+	apibase
+	Data struct {
+		Poss []*Position `json:"list"`
+	} `json:"data"`
+}
+
+type Position struct {
+	RawId     int    `json:"positionId"`
+	RawMode   string `json:"side"`
+	RawSymbol string `json:"symbol"`
+	RawSize   string `json:"size"`
+	RawPrice  string `json:"price"`
+}
+
+func (self *Position) Id() string {
+	return fmt.Sprintf("%v", self.RawId)
+}
+
+func (self *Position) Symbol() string {
+	return self.RawSymbol
+}
+
+func (self *Position) Size() float64 {
+	size, err := strconv.ParseFloat(self.RawSize, 64)
+	if err != nil {
+		return float64(-1)
+	}
+	return size
+}
+
+func (self *Position) Price() float64 {
+	price, err := strconv.ParseFloat(self.RawPrice, 64)
+	if err != nil {
+		return float64(-1)
+	}
+	return price
 }
 
 type rateBase struct {
@@ -240,7 +359,7 @@ func (self *GoMOcoin) GetRate() (map[string]shop.Rate, error) {
 	self.lock()
 	defer self.unlock()
 
-	ret, err := self.request2Pool("GET", "/public", "/v1/ticker", nil)
+	ret, err := self.request2Pool("GET", "/public", "/v1/ticker", "", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +417,7 @@ func (self *GoMOcoin) Order(mode string, symbol string, size float64, r shop.Rat
 			"executionType" : "LIMIT", "price" : "` + price_str + `",
 			"size" : "` + size_str + `"}`)
 
-	ret, err := self.request2Pool("POST", "/private", "/v1/order", []byte(order))
+	ret, err := self.request2Pool("POST", "/private", "/v1/order", "", []byte(order))
 	if err != nil {
 		return "", err
 	}

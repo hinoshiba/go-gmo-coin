@@ -33,7 +33,7 @@ func NewClient(auth *Auth) *Client {
 	return &Client{auth:auth, pr_c:pr_c}
 }
 
-func (self *Client) NewRequest(method string, base_path string, path string, body []byte) (*Request, error) {
+func (self *Client) NewRequest(method string, base_path string, path string, param string, body []byte) (*Request, error) {
 	if body == nil {
 		body = []byte{}
 	}
@@ -41,7 +41,12 @@ func (self *Client) NewRequest(method string, base_path string, path string, bod
 	t_stmp := NewTimestamp()
 	sig := self.genhmac([]byte(t_stmp.UnixString() + method + path + string(body)))
 
-	url := URL_BASE + base_path + path
+	var url string
+	if param == "" {
+		url = URL_BASE + base_path + path
+	} else {
+		url = URL_BASE + base_path + path + "?" + param
+	}
 
 	req, err := http.NewRequest(method, url, bytes.NewReader(body))
 	if err != nil {
