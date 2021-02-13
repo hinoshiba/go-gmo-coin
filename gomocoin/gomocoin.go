@@ -253,6 +253,10 @@ func (self *Position) Price() float64 {
 	return price
 }
 
+func (self *Position) OrderType() string {
+	return self.RawMode
+}
+
 type rateBase struct {
 	apibase
 	Data []*RateData `json:"data"`
