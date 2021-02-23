@@ -414,7 +414,7 @@ func (self *GoMOcoin) Order(mode string, symbol string, size float64, r shop.Rat
 	if mode == SIDE_BUY {
 		o_price = o_rate.Ask()
 	}
-	price_str := fmt.Sprintf("%f", o_price)
+	price_str := strconv.FormatFloat(o_price, 'f', -1, 64)
 	size_str := strconv.FormatFloat(size, 'f', -1, 64)
 
 	order := (`{"symbol" : "` + symbol + `", "side" : "` + mode + `",
