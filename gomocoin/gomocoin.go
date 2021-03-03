@@ -153,8 +153,9 @@ func (self *GoMOcoin) unlock() {
 	self.mtx.Unlock()
 }
 
-func (self *GoMOcoin) Close() {
+func (self *GoMOcoin) Close() error {
 	self.ctx_cancel()
+	return nil
 }
 
 func (self *GoMOcoin) request2Pool(method string, base_path string, path string, param string, body []byte) ([]byte, error) {
