@@ -74,19 +74,15 @@ func (self *Client) RunPool(ctx context.Context) {
 				case <- ctx.Done():
 					return
 				case <- rq.life.C:
-					go func() {
-						rq.Done
-					}()
+					rq.Error(fmt.Errorf("HttpRequest: Timeout."))
 					continue
 				case <- tmr.C:
 					b, err := rq.req.Do()
-					if err != nil { //TODO: here?
+					if err != nil {
+						rq.Error(fmt.Errorf("HttpRequestError: %s", err))
 						continue
 					}
-					go func(b []byte) {
-						rq.ret = b
-						rq.Done
-					}(b)
+					rq.Return(b)
 				}
 			}
 		}
@@ -104,11 +100,7 @@ func (self *Client) PostPool(r *Request) ([]byte, error) {
 	}()
 
 	rq.WaitDone()
-
-	if rq.Bytes() == nil {
-		return nil, fmt.Errorf("empty return")
-	}
-	return rq.Bytes(), nil
+	return rq.Result()
 }
 
 type request struct {
@@ -116,7 +108,9 @@ type request struct {
 
 	life  *time.Timer
 	block chan struct{}
+
 	ret   []byte
+	err   error
 }
 
 func newRequest(req *Request) *request {
@@ -125,15 +119,41 @@ func newRequest(req *Request) *request {
 	return &request{req:req, block:block, life:life}
 }
 
-func (self *request) Bytes() []byte {
-	return self.ret
+func (self *request) Result() ([]byte, error) {
+	if self.err != nil {
+		return nil, self.err
+	}
+
+	if self.ret == nil {
+		return nil, fmt.Errorf("request.Result: empty body")
+	}
+	return self.ret, nil
 }
 
 func (self *request) WaitDone() {
 	<-self.block
 }
 
-func (self *request) Done {
+func (self *request) Error(err error) {
+	go func() {
+		defer self.done()
+
+		self.err = err
+	}()
+}
+
+func (self *request) Return(b []byte) {
+	cp_b := make([]byte, len(b))
+	copy(cp_b, b)
+
+	go func() {
+		defer self.done()
+
+		self.ret = cp_b
+	}()
+}
+
+func (self *request) done() {
 	close(self.block)
 }
 
