@@ -75,7 +75,7 @@ func (self *Client) RunPool(ctx context.Context) {
 					return
 				case <- rq.life.C:
 					go func() {
-						rq.done <- struct{}{}
+						rq.done()
 					}()
 					continue
 				case <- tmr.C:
@@ -83,10 +83,10 @@ func (self *Client) RunPool(ctx context.Context) {
 					if err != nil { //TODO: here?
 						continue
 					}
-					go func() {
+					go func(b []byte) {
 						rq.ret = b
-						rq.done <- struct{}{}
-					}()
+						rq.done()
+					}(b)
 				}
 			}
 		}
@@ -103,7 +103,7 @@ func (self *Client) PostPool(r *Request) ([]byte, error) {
 		self.rq_c <- rq
 	}()
 
-	<-rq.done
+	rq.wait_done()
 
 	if rq.Bytes() == nil {
 		return nil, fmt.Errorf("empty return")
@@ -112,21 +112,29 @@ func (self *Client) PostPool(r *Request) ([]byte, error) {
 }
 
 type request struct {
-	req  *Request
+	req   *Request
 
-	life *time.Timer
-	done chan struct{}
-	ret  []byte
+	life  *time.Timer
+	block chan struct{}
+	ret   []byte
 }
 
 func newRequest(req *Request) *request {
-	done := make(chan struct{})
+	block := make(chan struct{})
 	life := time.NewTimer(time.Second * 3)
-	return &request{req:req, done:done, life:life}
+	return &request{req:req, block:block, life:life}
 }
 
 func (self *request) Bytes() []byte {
 	return self.ret
+}
+
+func (self *request) wait_done() {
+	<-self.block
+}
+
+func (self *request) done() {
+	close(self.block)
 }
 
 type Request struct {
