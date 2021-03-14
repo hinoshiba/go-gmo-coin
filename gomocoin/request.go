@@ -16,7 +16,7 @@ import (
 
 const (
 	URL_BASE     = "https://api.coin.z.com"
-	PATH_PLIVATE = "/private"
+	PATH_PLIVATE = "/rqivate"
 	PATH_PUBLIC  = "/public"
 
 	LIMIT_MILLISEC int = 301
@@ -25,12 +25,12 @@ const (
 type Client struct {
 	auth  *Auth
 
-	pr_c  chan *poolRequest
+	rq_c  chan *request
 }
 
 func NewClient(auth *Auth) *Client {
-	pr_c := make(chan *poolRequest)
-	return &Client{auth:auth, pr_c:pr_c}
+	rq_c := make(chan *request)
+	return &Client{auth:auth, rq_c:rq_c}
 }
 
 func (self *Client) NewRequest(method string, base_path string, path string, param string, body []byte) (*Request, error) {
@@ -69,23 +69,23 @@ func (self *Client) RunPool(ctx context.Context) {
 			select {
 			case <- ctx.Done():
 				return
-			case pr := <- self.pr_c:
+			case rq := <- self.rq_c:
 				select {
 				case <- ctx.Done():
 					return
-				case <- pr.life.C:
+				case <- rq.life.C:
 					go func() {
-						pr.done <- struct{}{}
+						rq.done <- struct{}{}
 					}()
 					continue
 				case <- tmr.C:
-					b, err := pr.req.Do()
-					if err != nil {
+					b, err := rq.req.Do()
+					if err != nil { //TODO: here?
 						continue
 					}
 					go func() {
-						pr.ret = b
-						pr.done <- struct{}{}
+						rq.ret = b
+						rq.done <- struct{}{}
 					}()
 				}
 			}
@@ -94,24 +94,24 @@ func (self *Client) RunPool(ctx context.Context) {
 }
 
 func (self *Client) PostPool(r *Request) ([]byte, error) {
-	if self.pr_c == nil {
+	if self.rq_c == nil {
 		return nil, fmt.Errorf("undefined pool channel.")
 	}
 
-	pr := newPoolRequest(r)
+	rq := newPoolRequest(r)
 	go func() {
-		self.pr_c <- pr
+		self.rq_c <- rq
 	}()
 
-	<-pr.done
+	<-rq.done
 
-	if pr.Bytes() == nil {
+	if rq.Bytes() == nil {
 		return nil, fmt.Errorf("empty return")
 	}
-	return pr.Bytes(), nil
+	return rq.Bytes(), nil
 }
 
-type poolRequest struct {
+type request struct {
 	req  *Request
 
 	life *time.Timer
@@ -119,13 +119,13 @@ type poolRequest struct {
 	ret  []byte
 }
 
-func newPoolRequest(req *Request) *poolRequest {
+func newPoolRequest(req *Request) *request {
 	done := make(chan struct{})
 	life := time.NewTimer(time.Second * 3)
-	return &poolRequest{req:req, done:done, life:life}
+	return &request{req:req, done:done, life:life}
 }
 
-func (self *poolRequest) Bytes() []byte {
+func (self *request) Bytes() []byte {
 	return self.ret
 }
 
