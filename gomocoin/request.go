@@ -75,7 +75,7 @@ func (self *Client) RunPool(ctx context.Context) {
 					return
 				case <- rq.life.C:
 					go func() {
-						rq.done()
+						rq.Done
 					}()
 					continue
 				case <- tmr.C:
@@ -85,7 +85,7 @@ func (self *Client) RunPool(ctx context.Context) {
 					}
 					go func(b []byte) {
 						rq.ret = b
-						rq.done()
+						rq.Done
 					}(b)
 				}
 			}
@@ -103,7 +103,7 @@ func (self *Client) PostPool(r *Request) ([]byte, error) {
 		self.rq_c <- rq
 	}()
 
-	rq.wait_done()
+	rq.WaitDone()
 
 	if rq.Bytes() == nil {
 		return nil, fmt.Errorf("empty return")
@@ -129,11 +129,11 @@ func (self *request) Bytes() []byte {
 	return self.ret
 }
 
-func (self *request) wait_done() {
+func (self *request) WaitDone() {
 	<-self.block
 }
 
-func (self *request) done() {
+func (self *request) Done {
 	close(self.block)
 }
 
