@@ -16,7 +16,7 @@ import (
 
 const (
 	URL_BASE     = "https://api.coin.z.com"
-	PATH_PLIVATE = "/rqivate"
+	PATH_PLIVATE = "/private"
 	PATH_PUBLIC  = "/public"
 
 	LIMIT_MILLISEC int = 301
@@ -98,7 +98,7 @@ func (self *Client) PostPool(r *Request) ([]byte, error) {
 		return nil, fmt.Errorf("undefined pool channel.")
 	}
 
-	rq := newPoolRequest(r)
+	rq := newRequest(r)
 	go func() {
 		self.rq_c <- rq
 	}()
@@ -119,7 +119,7 @@ type request struct {
 	ret  []byte
 }
 
-func newPoolRequest(req *Request) *request {
+func newRequest(req *Request) *request {
 	done := make(chan struct{})
 	life := time.NewTimer(time.Second * 3)
 	return &request{req:req, done:done, life:life}
