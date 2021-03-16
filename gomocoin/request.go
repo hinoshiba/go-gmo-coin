@@ -25,12 +25,12 @@ const (
 type Client struct {
 	auth  *Auth
 
-	pr_c  chan *poolRequest
+	rq_c  chan *request
 }
 
 func NewClient(auth *Auth) *Client {
-	pr_c := make(chan *poolRequest)
-	return &Client{auth:auth, pr_c:pr_c}
+	rq_c := make(chan *request)
+	return &Client{auth:auth, rq_c:rq_c}
 }
 
 func (self *Client) NewRequest(method string, base_path string, path string, param string, body []byte) (*Request, error) {
@@ -69,24 +69,20 @@ func (self *Client) RunPool(ctx context.Context) {
 			select {
 			case <- ctx.Done():
 				return
-			case pr := <- self.pr_c:
+			case rq := <- self.rq_c:
 				select {
 				case <- ctx.Done():
 					return
-				case <- pr.life.C:
-					go func() {
-						pr.done <- struct{}{}
-					}()
+				case <- rq.life.C:
+					rq.Error(fmt.Errorf("HttpRequest: Timeout."))
 					continue
 				case <- tmr.C:
-					b, err := pr.req.Do()
+					b, err := rq.req.Do()
 					if err != nil {
+						rq.Error(fmt.Errorf("HttpRequestError: %s", err))
 						continue
 					}
-					go func() {
-						pr.ret = b
-						pr.done <- struct{}{}
-					}()
+					rq.Return(b)
 				}
 			}
 		}
@@ -94,39 +90,71 @@ func (self *Client) RunPool(ctx context.Context) {
 }
 
 func (self *Client) PostPool(r *Request) ([]byte, error) {
-	if self.pr_c == nil {
+	if self.rq_c == nil {
 		return nil, fmt.Errorf("undefined pool channel.")
 	}
 
-	pr := newPoolRequest(r)
+	rq := newRequest(r)
 	go func() {
-		self.pr_c <- pr
+		self.rq_c <- rq
 	}()
 
-	<-pr.done
-
-	if pr.Bytes() == nil {
-		return nil, fmt.Errorf("empty return")
-	}
-	return pr.Bytes(), nil
+	rq.WaitDone()
+	return rq.Result()
 }
 
-type poolRequest struct {
-	req  *Request
+type request struct {
+	req   *Request
 
-	life *time.Timer
-	done chan struct{}
-	ret  []byte
+	life  *time.Timer
+	block chan struct{}
+
+	ret   []byte
+	err   error
 }
 
-func newPoolRequest(req *Request) *poolRequest {
-	done := make(chan struct{})
+func newRequest(req *Request) *request {
+	block := make(chan struct{})
 	life := time.NewTimer(time.Second * 3)
-	return &poolRequest{req:req, done:done, life:life}
+	return &request{req:req, block:block, life:life}
 }
 
-func (self *poolRequest) Bytes() []byte {
-	return self.ret
+func (self *request) Result() ([]byte, error) {
+	if self.err != nil {
+		return nil, self.err
+	}
+
+	if self.ret == nil {
+		return nil, fmt.Errorf("request.Result: empty body")
+	}
+	return self.ret, nil
+}
+
+func (self *request) WaitDone() {
+	<-self.block
+}
+
+func (self *request) Error(err error) {
+	go func() {
+		defer self.done()
+
+		self.err = err
+	}()
+}
+
+func (self *request) Return(b []byte) {
+	cp_b := make([]byte, len(b))
+	copy(cp_b, b)
+
+	go func() {
+		defer self.done()
+
+		self.ret = cp_b
+	}()
+}
+
+func (self *request) done() {
+	close(self.block)
 }
 
 type Request struct {
