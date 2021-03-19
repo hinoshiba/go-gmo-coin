@@ -33,6 +33,7 @@ const (
 	SIDE_SELL string = "SELL"
 
 	TYPE_EXECUTION_STREAM string = "MARKET"
+	TYPE_SETTLE_FIX string = "CLOSE"
 
 	FMT_TIME string = "2006-01-02T15:04:05.000Z"
 )
@@ -89,6 +90,34 @@ func (self *GoMOcoin) GetPositions(symbol string) ([]shop.Position, error) {
 	return poss, nil
 }
 
+func (self *GoMOcoin) GetFixes(symbol string) ([]shop.Fix, error) {
+	self.lock()
+	defer self.unlock()
+
+	param := "symbol=" + symbol + "&page=1&count=100"
+	ret, err := self.request2Pool("GET", "/private", "/v1/latestExecutions", param, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var fb fixBase
+	if err := json.Unmarshal(ret, &fb); err != nil {
+		return nil, err
+	}
+	if fb.Status != 0 {
+		return nil, fmt.Errorf("%s", fb.Message())
+	}
+
+	sfs := []shop.Fix{}
+	for _, f := range fb.Data.Fixes {
+		if TYPE_SETTLE_FIX != f.RawSettlement {
+			continue
+		}
+		sfs = append(sfs, f)
+	}
+	return sfs, nil
+}
+
 func (self *GoMOcoin) OrderStreamIn(mode string, symbol string, size float64) error {
 	size_str := strconv.FormatFloat(size, 'f', -1, 64)
 	order := (`{"symbol" : "` + symbol + `", "side" : "` + mode + `",
@@ -99,12 +128,12 @@ func (self *GoMOcoin) OrderStreamIn(mode string, symbol string, size float64) er
 	if err != nil {
 		return err
 	}
-	var o orderBase
-	if err := json.Unmarshal(ret, &o); err != nil {
+	var r respBase
+	if err := json.Unmarshal(ret, &r); err != nil {
 		return err
 	}
-	if o.Status != 0 {
-		return fmt.Errorf("%s", o.Message())
+	if r.Status != 0 {
+		return fmt.Errorf("%s", r.Message())
 	}
 	return nil
 }
@@ -135,12 +164,12 @@ func (self *GoMOcoin) OrderStreamOut(pos shop.Position) error {
 	if err != nil {
 		return err
 	}
-	var o orderBase
-	if err := json.Unmarshal(ret, &o); err != nil {
+	var r respBase
+	if err := json.Unmarshal(ret, &r); err != nil {
 		return err
 	}
-	if o.Status != 0 {
-		return fmt.Errorf("%s", o.Message())
+	if r.Status != 0 {
+		return fmt.Errorf("%s", r.Message())
 	}
 	return nil
 }
@@ -213,6 +242,69 @@ func (self *GoMOcoin) checkStatus() (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+type fixBase struct {
+	apibase
+	Data struct {
+		Fixes []*Fix `json:"list"`
+	} `json:"data"`
+}
+
+type Fix struct {
+	RawRelationId int    `json:"orderId"`
+	RawId         int    `json:"executionId"`
+	RawSymbol     string `json:"symbol"`
+	RawMode       string `json:"side"`
+	RawSettlement string `json:"settleType"`
+	RawSize       string `json:"size"`
+	RawPrice      string `json:"price"`
+	RawYield      string `json:"lossGain"`
+	RawDate       string `json:"timestamp"`
+}
+
+func (self *Fix) Id() string {
+	return fmt.Sprintf("%v", self.RawId)
+}
+
+func (self *Fix) Symbol() string {
+	return self.RawSymbol
+}
+
+func (self *Fix) OrderType() string {
+	return self.RawMode
+}
+
+func (self *Fix) Size() float64 {
+	size, err := strconv.ParseFloat(self.RawSize, 64)
+	if err != nil {
+		return float64(-1)
+	}
+	return size
+}
+
+func (self *Fix) Price() float64 {
+	price, err := strconv.ParseFloat(self.RawPrice, 64)
+	if err != nil {
+		return float64(-1)
+	}
+	return price
+}
+
+func (self *Fix) Yield() (float64, error) {
+	yield, err := strconv.ParseFloat(self.RawYield, 64)
+	if err != nil {
+		return float64(-1), err
+	}
+	return yield, nil
+}
+
+func (self *Fix) Date() (time.Time, error) {
+	t, err := time.Parse(FMT_TIME, self.RawDate)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return t, nil
 }
 
 type posBase struct {
@@ -387,52 +479,7 @@ func (self *GoMOcoin) GetRate() (map[string]shop.Rate, error) {
 	return rs, nil
 }
 
-type orderBase struct {
+type respBase struct {
 	apibase
 	Data string `json:"data"`
-}
-
-func (self *GoMOcoin) Order(mode string, symbol string, size float64, r shop.Rate) (string, error) {
-	var o_price float64 = 0
-	var o_rate  shop.Rate = r
-
-	if r == nil {
-		rate_data, ok := self.rate[symbol]
-		if !ok {
-			return "", fmt.Errorf("undefined symbol. %s", symbol)
-		}
-
-		rate, err := conv2Rate(rate_data)
-		if err != nil {
-			return "", err
-		}
-
-		o_rate = rate
-	}
-	if mode == SIDE_SELL {
-		o_price = o_rate.Bid()
-	}
-	if mode == SIDE_BUY {
-		o_price = o_rate.Ask()
-	}
-	price_str := strconv.FormatFloat(o_price, 'f', -1, 64)
-	size_str := strconv.FormatFloat(size, 'f', -1, 64)
-
-	order := (`{"symbol" : "` + symbol + `", "side" : "` + mode + `",
-			"executionType" : "LIMIT", "price" : "` + price_str + `",
-			"size" : "` + size_str + `"}`)
-
-	ret, err := self.request2Pool("POST", "/private", "/v1/order", "", []byte(order))
-	if err != nil {
-		return "", err
-	}
-	var o orderBase
-	if err := json.Unmarshal(ret, &o); err != nil {
-		return "", err
-	}
-	if o.Status != 0 {
-		return "", fmt.Errorf("%s", o.Message())
-	}
-
-	return o.Data, nil
 }
