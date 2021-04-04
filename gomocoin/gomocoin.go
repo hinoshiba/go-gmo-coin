@@ -9,10 +9,6 @@ import (
 	"encoding/json"
 )
 
-import (
-	"github.com/vouquet/shop"
-)
-
 const (
 	STATUS_MAINTENANCE string = "MAINTENANCE"
 	STATUS_PREOPEN string = "PREOPEN"
@@ -65,7 +61,7 @@ func NewGoMOcoin(api_key string, secret_key string, b_ctx context.Context) (*GoM
 	return self, nil
 }
 
-func (self *GoMOcoin) GetPositions(symbol string) ([]shop.Position, error) {
+func (self *GoMOcoin) GetPositions(symbol string) ([]*Position, error) {
 	self.lock()
 	defer self.unlock()
 
@@ -83,14 +79,10 @@ func (self *GoMOcoin) GetPositions(symbol string) ([]shop.Position, error) {
 		return nil, fmt.Errorf("%s", p.Message())
 	}
 
-	poss := []shop.Position{}
-	for _, pos := range p.Data.Poss {
-		poss = append(poss, pos)
-	}
-	return poss, nil
+	return p.Data.Poss, nil
 }
 
-func (self *GoMOcoin) GetFixes(symbol string) ([]shop.Fix, error) {
+func (self *GoMOcoin) GetFixes(symbol string) ([]*Fix, error) {
 	self.lock()
 	defer self.unlock()
 
@@ -108,14 +100,7 @@ func (self *GoMOcoin) GetFixes(symbol string) ([]shop.Fix, error) {
 		return nil, fmt.Errorf("%s", fb.Message())
 	}
 
-	sfs := []shop.Fix{}
-	for _, f := range fb.Data.Fixes {
-		if TYPE_SETTLE_FIX != f.RawSettlement {
-			continue
-		}
-		sfs = append(sfs, f)
-	}
-	return sfs, nil
+	return fb.Data.Fixes, nil
 }
 
 func (self *GoMOcoin) OrderStreamIn(mode string, symbol string, size float64) error {
@@ -138,26 +123,22 @@ func (self *GoMOcoin) OrderStreamIn(mode string, symbol string, size float64) er
 	return nil
 }
 
-func (self *GoMOcoin) OrderStreamOut(pos shop.Position) error {
-	pb, ok := pos.(*Position)
-	if !ok {
-		return fmt.Errorf("unkown type at this store.")
-	}
+func (self *GoMOcoin) OrderStreamOut(pos *Position) error {
 	var mode string
-	if pb.RawMode == SIDE_SELL {
+	if pos.RawMode == SIDE_SELL {
 		mode = SIDE_BUY
 	}
-	if pb.RawMode == SIDE_BUY {
+	if pos.RawMode == SIDE_BUY {
 		mode = SIDE_SELL
 	}
 	if mode == "" {
-		return fmt.Errorf("have a unkown mode. '%s'", pb.RawMode)
+		return fmt.Errorf("have a unkown mode. '%s'", pos.RawMode)
 	}
 
-	order := (`{"symbol" : "` + pb.RawSymbol + `", "side" : "` + mode + `",
+	order := (`{"symbol" : "` + pos.RawSymbol + `", "side" : "` + mode + `",
 			"executionType" : "` + TYPE_EXECUTION_STREAM + `",
 			"settlePosition":[
-				{"size" : "` + pb.RawSize + `", "positionId" : ` + pb.Id() + `}
+				{"size" : "` + pos.RawSize + `", "positionId" : ` + pos.Id() + `}
 			]}`)
 
 	ret, err := self.request2Pool("POST", "/private", "/v1/closeOrder", "", []byte(order))
@@ -452,7 +433,7 @@ func conv2Rate(rd *RateData) (*Rate, error) {
 	}, nil
 }
 
-func (self *GoMOcoin) GetRate() (map[string]shop.Rate, error) {
+func (self *GoMOcoin) GetRate() (map[string]*Rate, error) {
 	self.lock()
 	defer self.unlock()
 
@@ -465,7 +446,7 @@ func (self *GoMOcoin) GetRate() (map[string]shop.Rate, error) {
 		return nil, err
 	}
 
-	rs := make(map[string]shop.Rate)
+	rs := make(map[string]*Rate)
 	for _, rd := range rb.Data {
 		r, err := conv2Rate(rd)
 		if err != nil {
