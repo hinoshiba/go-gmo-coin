@@ -28,7 +28,8 @@ const (
 	SIDE_BUY  string = "BUY"
 	SIDE_SELL string = "SELL"
 
-	TYPE_EXECUTION_STREAM string = "MARKET"
+	TYPE_EXECUTION_MARKET string = "MARKET"
+	TYPE_EXECUTION_LIMIT string = "LIMIT"
 	TYPE_SETTLE_FIX string = "CLOSE"
 
 	FMT_TIME string = "2006-01-02T15:04:05.000Z"
@@ -82,6 +83,24 @@ func (self *GoMOcoin) GetPositions(symbol string) ([]*Position, error) {
 	return p.Data.Poss, nil
 }
 
+func (self *GoMOcoin) GetAsset() ([]*Asset, error) {
+	self.lock()
+	defer self.unlock()
+
+	ret, err := self.request2Pool("GET", "/private", "/v1/account/assets", "", nil)
+	if err != nil {
+		return nil, err
+	}
+	var ab assetBase
+	if err := json.Unmarshal(ret, &ab); err != nil {
+		return nil, err
+	}
+	if ab.Status != 0 {
+		return nil, fmt.Errorf("%s", ab.Message())
+	}
+	return ab.Data, nil
+}
+
 func (self *GoMOcoin) GetFixes(symbol string) ([]*Fix, error) {
 	self.lock()
 	defer self.unlock()
@@ -103,11 +122,37 @@ func (self *GoMOcoin) GetFixes(symbol string) ([]*Fix, error) {
 	return fb.Data.Fixes, nil
 }
 
-func (self *GoMOcoin) OrderStreamIn(mode string, symbol string, size float64) error {
+func (self *GoMOcoin) LimitOrder(symbol string, mode string, size float64, price float64) error {
+	self.lock()
+	defer self.unlock()
+
+	return self.order(symbol, mode, TYPE_EXECUTION_LIMIT, size, price)
+}
+
+func (self *GoMOcoin) MarketOrder(symbol string, mode string, size float64) error {
+	self.lock()
+	defer self.unlock()
+
+	return self.order(symbol, mode, TYPE_EXECUTION_MARKET, size, float64(0))
+}
+
+func (self *GoMOcoin) order(symbol string, mode string, e_type string, size float64, price float64) error {
 	size_str := strconv.FormatFloat(size, 'f', -1, 64)
-	order := (`{"symbol" : "` + symbol + `", "side" : "` + mode + `",
-			"executionType" : "` + TYPE_EXECUTION_STREAM + `",
-			"size" : "` + size_str + `"}`)
+	var order string
+	if e_type == TYPE_EXECUTION_MARKET {
+		order = (`{"symbol" : "` + symbol + `", "side" : "` + mode + `",
+				"executionType" : "` + e_type + `",
+				"size" : "` + size_str + `"}`)
+	}
+	if e_type == TYPE_EXECUTION_LIMIT {
+		price_str := strconv.FormatFloat(price, 'f', -1, 64)
+		order = (`{"symbol" : "` + symbol + `", "side" : "` + mode + `",
+				"executionType" : "` + e_type + `", "price":"` + price_str + `",
+				"size" : "` + size_str + `"}`)
+	}
+	if order == "" {
+		return fmt.Errorf("undefined executionType '%s'", e_type)
+	}
 
 	ret, err := self.request2Pool("POST", "/private", "/v1/order", "", []byte(order))
 	if err != nil {
@@ -123,7 +168,15 @@ func (self *GoMOcoin) OrderStreamIn(mode string, symbol string, size float64) er
 	return nil
 }
 
-func (self *GoMOcoin) OrderStreamOut(pos *Position) error {
+func (self *GoMOcoin) LimitOrderFix(pos *Position, price float64) error {
+	return self.orderFix(pos, TYPE_EXECUTION_LIMIT, price)
+}
+
+func (self *GoMOcoin) MarketOrderFix(pos *Position) error {
+	return self.orderFix(pos, TYPE_EXECUTION_MARKET, float64(0))
+}
+
+func (self *GoMOcoin) orderFix(pos *Position, e_type string, price float64) error {
 	var mode string
 	if pos.RawMode == SIDE_SELL {
 		mode = SIDE_BUY
@@ -135,11 +188,25 @@ func (self *GoMOcoin) OrderStreamOut(pos *Position) error {
 		return fmt.Errorf("have a unkown mode. '%s'", pos.RawMode)
 	}
 
-	order := (`{"symbol" : "` + pos.RawSymbol + `", "side" : "` + mode + `",
-			"executionType" : "` + TYPE_EXECUTION_STREAM + `",
-			"settlePosition":[
-				{"size" : "` + pos.RawSize + `", "positionId" : ` + pos.Id() + `}
-			]}`)
+	var order string
+	if e_type == TYPE_EXECUTION_MARKET {
+		order = (`{"symbol" : "` + pos.RawSymbol + `", "side" : "` + mode + `",
+				"executionType" : "` + e_type + `",
+				"settlePosition":[
+					{"size" : "` + pos.RawSize + `", "positionId" : ` + pos.Id() + `}
+				]}`)
+	}
+	if e_type == TYPE_EXECUTION_LIMIT {
+		price_str := strconv.FormatFloat(price, 'f', -1, 64)
+		order = (`{"symbol" : "` + pos.RawSymbol + `", "side" : "` + mode + `",
+				"executionType" : "` + e_type + `","price": "` + price_str + `",
+				"settlePosition":[
+					{"size" : "` + pos.RawSize + `", "positionId" : ` + pos.Id() + `}
+				]}`)
+	}
+	if order == "" {
+		return fmt.Errorf("undefined executionType '%s'", e_type)
+	}
 
 	ret, err := self.request2Pool("POST", "/private", "/v1/closeOrder", "", []byte(order))
 	if err != nil {
@@ -223,6 +290,47 @@ func (self *GoMOcoin) checkStatus() (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+type assetBase struct {
+	apibase
+	Data []*Asset `json:"data"`
+}
+
+type Asset struct {
+	RawAmount    string `json:"amount"`
+	RawAvailable string `json:"available"`
+	RawSymbol    string `json:"symbol"`
+
+	amount       float64
+	available    float64
+}
+
+func (self *Asset) fix() error {
+	amount, err := strconv.ParseFloat(self.RawAmount, 64)
+	if err != nil {
+		return err
+	}
+	available, err := strconv.ParseFloat(self.RawAvailable, 64)
+	if err != nil {
+		return err
+	}
+
+	self.amount = amount
+	self.available = available
+	return nil
+}
+
+func (self *Asset) Amount() float64 {
+	return self.amount
+}
+
+func (self *Asset) Available() float64 {
+	return self.available
+}
+
+func (self *Asset) Symbol() string {
+	return self.RawSymbol
 }
 
 type fixBase struct {
