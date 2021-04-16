@@ -98,6 +98,12 @@ func (self *GoMOcoin) GetAsset() ([]*Asset, error) {
 	if ab.Status != 0 {
 		return nil, fmt.Errorf("%s", ab.Message())
 	}
+
+	for _, a := range ab.Data {
+		if err := a.fix(); err != nil {
+			return nil, fmt.Errorf("%s", err)
+		}
+	}
 	return ab.Data, nil
 }
 
