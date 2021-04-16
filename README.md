@@ -9,7 +9,7 @@ go-gmo-coin
 
 * easy
 ```
-import "github.com/hinoshiba/go-gmo-coin/gomocoin"
+import "github.com/vouquet/go-gmo-coin/gomocoin"
 
 func main() {
 	API_KEY = "your api key"
@@ -21,20 +21,21 @@ func main() {
 	}
 	defer gmocoin.Close()
 
-	_, err = gmocoin.UpdateRate()
+	rates, err = gmocoin.GetRate()
 	if err != nil {
+		panic(err)
+	}
+	for symbol, rate := range rates {
+		log.Println(symbol, rate.Ask(), rate.Bid())
+	}
+
+	//buy
+	if err := gmocoin.MarketOrder(gomocoin.SYMBOL_BTC, gomocoin.SIDE_BUY, 0.0001); err != nil {
 		panic(err)
 	}
 
 	//sell
-	id, err := gmocoin.Order(gomocoin.SIDE_SELL, gomocoin.SYMBOL_BTC, 0.0001)
-	if err != nil {
-		panic(err)
-	}
-
-	//buy
-	id, err = gmocoin.Order(gomocoin.SIDE_BUY, gomocoin.SYMBOL_BTC, 0.0001)
-	if err != nil {
+	if err := gmocoin.MarketOrder(gomocoin.SYMBOL_BTC, gomocoin.SIDE_BUY, 0.0001); err != nil {
 		panic(err)
 	}
 }
